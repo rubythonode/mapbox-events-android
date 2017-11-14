@@ -9,8 +9,12 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.os.Handler;
 import android.os.IBinder;
 import android.support.v4.content.LocalBroadcastManager;
+
+import com.mapbox.services.android.core.permissions.ExponentialBackoff;
+import com.mapbox.services.android.core.permissions.PermissionsManager;
 
 import java.util.List;
 
@@ -184,7 +188,7 @@ public class MapboxTelemetry implements FullQueueCallback, EventCallback {
   }
 
   private boolean startTelemetry() {
-    if (!isTelemetryEnabled) {
+    if (!isTelemetryEnabled && checkLocationPermission()) {
       isTelemetryEnabled = true;
       optIn();
       schedulerFlusher.register();
@@ -277,4 +281,33 @@ public class MapboxTelemetry implements FullQueueCallback, EventCallback {
       serviceBound = false;
     }
   };
+
+  private boolean checkLocationPermission() {
+    if (PermissionsManager.areLocationPermissionsGranted(context)) {
+      return true;
+    } else {
+      permissionBackoff();
+      return false;
+    }
+  }
+
+  private void permissionBackoff() {
+    final Handler handler = new Handler();
+    final ExponentialBackoff counter = new ExponentialBackoff();
+
+    Runnable runnable = new Runnable() {
+      @Override
+      public void run() {
+        if (PermissionsManager.areLocationPermissionsGranted(context)) {
+          startTelemetry();
+        } else {
+          long nextWaitTime = counter.nextBackOffMillis();
+          handler.postDelayed(this, nextWaitTime);
+        }
+      }
+    };
+
+    long nextWaitTime = counter.nextBackOffMillis();
+    handler.postDelayed(runnable, nextWaitTime);
+  }
 }
